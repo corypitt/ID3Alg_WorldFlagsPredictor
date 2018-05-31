@@ -1,0 +1,354 @@
+# Max Montgomery
+# Cory Pitt
+
+import pandas as pd
+from math import log
+import numpy as np
+import json
+import copy
+
+#Find the entropy of a passed in list
+def findEntropy(curList):
+    curDictionary = {}
+    count = 0;
+    curEntropy = 0.0
+    for item in curList:
+        count += 1
+        if item in curDictionary:
+            curDictionary[item] += 1
+        else:
+            curDictionary[item] = 1
+    for values in curDictionary:
+        prob = curDictionary[values]/count
+        curEntropy += -prob * log(prob, 2)
+
+    return curEntropy
+
+#Find a labels index in a list of labels
+def findIndex(label, listOfLabels):
+    count = 0
+    for labels in listOfLabels:
+        if label == labels:
+            return count
+        else:
+             count += 1
+    return -1
+
+#Find the attribute with the highest info gain
+def maxGain(attributes, data, classifier, used_attributes):
+    curMax = 0
+    bestAttribute = ''
+    for curAttribute in attributes:
+        if curAttribute is not classifier and curAttribute not in used_attributes:
+            potGain = attribGain(attributes, data, curAttribute, classifier)
+            if curMax < potGain:
+                curMax = potGain
+                bestAttribute = curAttribute
+    return bestAttribute
+
+#Find the info gain of an attribute
+def attribGain(attributes, data, curAttribute, classifier):
+    labelFrequency = {}
+    attribEntropy = 0.0
+    subset = []
+    subsetEntropy = 0.0
+
+    indexAttr = findIndex(curAttribute, attributes)
+    indexTarg = findIndex(classifier, attributes)
+    targList = []
+
+    for instance in data:
+        #print (instance)
+        targList.append(instance[indexTarg])
+        if instance[indexAttr] in labelFrequency:
+            labelFrequency[instance[indexAttr]] += 1.0
+        else:
+            labelFrequency[instance[indexAttr]] = 1.0
+
+    for label in labelFrequency.keys():
+        labelProb = labelFrequency[label] / sum(labelFrequency.values())
+        for instance in data:
+            if instance[indexAttr] == label:
+                subset.append(instance[indexTarg])
+        subsetEntropy += labelProb * findEntropy(subset)
+        subset = []
+
+    return (findEntropy(targList) - subsetEntropy)
+
+#This method allows the recursive creation of the decision tree
+def tree(examples, classification_attribute, attributes, used):
+
+    used_attributes = used[:]
+
+    instances = examples[:]
+
+    #classification_attribute_index = attributes.index(classification_attribute)
+    classification_attribute_index = findIndex(classification_attribute, attributes)
+
+    classifier_list = []
+    classifier_dict = {}
+
+    for row in instances:
+        #create list of classifiers
+        classifier_list.append(row[classification_attribute_index])
+        # create dictionary tracking frequency of each classifier used
+
+        if row[classification_attribute_index] in classifier_dict.keys( ):
+            #if classifier_dict.has_key(row[classification_attribute_index]):
+            classifier_dict[row[classification_attribute_index]] += 1
+        else:
+            classifier_dict[row[classification_attribute_index]] = 1
+
+    # find max used classifier
+    max_classifier_freq = 0
+    most_popular_classifier = ""
+    for key in classifier_dict.keys():
+        if classifier_dict[key] > max_classifier_freq:
+            max_classifier_freq = classifier_dict[key]
+            most_popular_classifer = key
+
+    # if data is empty or attributes - 1 is equal to 0, return most popular classification
+    if (len(attributes) - 1 <= 0): #or if data is empty
+        return most_popular_classifer
+
+    # if all classifiers are equal, return classifier
+    #print(classifier_list)
+    number_of_classifiers = len(classifier_list)
+    if (classifier_list.count(classifier_list[0]) == number_of_classifiers):
+        return classifier_list[0]
+
+    else:
+        # choose best attribute
+        best_attribute = maxGain(attributes, instances, classification_attribute, used_attributes)
+
+        used_attributes.append(best_attribute)
+
+        root = {best_attribute:{}}
+
+        # get index of best attribute
+        bestIndex = findIndex(best_attribute, attributes)
+
+        # get values of best attribute
+        best_index_values = []
+        for row in instances:
+            if row[bestIndex] not in best_index_values:
+                best_index_values.append(row[bestIndex])
+        # split up data
+
+        for value in best_index_values:
+            instances_subset = []
+            instances_subset = np.array([entry for entry in instances if entry[bestIndex] == value])
+
+            sub = tree(instances_subset, classification_attribute, attributes, used_attributes)
+
+            root[best_attribute][value] = sub
+
+        return root
+
+#Recursively predict a rows classification based on given attributes
+def predictor(row, attributes, classifiers, root):
+
+    if root in classifiers:
+        return root
+
+    for key in root:
+        index = findIndex(key, attributes)
+        if index is -1: # not an attribute, a value
+            next_val = root[key]
+            if next_val in classifiers:
+                return next_val
+            else:
+                # value of node is a attribute
+                return predictor(row, attributes, classifiers, root[key])
+        else:
+            # value of node node is a dictionary of values
+            for val in root[key]:
+                if row[index] == val:
+                    return predictor(row, attributes, classifiers, root[key][val])
+
+# take the tree and current error rate
+# go through and for each node whose node[key] is a value replace the node
+# with the majority value
+# fucntion for fidning each possible node that can be pruned and return a list of those nodes
+def possiblePruneNodes(pruneRoot, attributes, classifiers_list):
+
+    curVals = {}
+    moveFlag = 0
+    #check if all keys in pruneRoot lead to values
+    all_classifiers = True
+    classifier_dictionary = {}
+    tempkey = ""
+    for key in pruneRoot:
+        # would we get a value?
+        #all_classifiers = True
+        for key2 in pruneRoot[key]:
+
+            if pruneRoot[key][key2] not in classifiers_list:
+                #then we want to call the method again on the keys that are attributes
+                all_classifiers = False
+                if type (pruneRoot[key][key2]) is dict:
+                    print ("we made a recusrive fucking call")
+                    print(pruneRoot[key][key2])
+                    return possiblePruneNodes(pruneRoot[key][key2], attributes, classifiers_list)
+            else:
+                tempkey = key
+
+                if pruneRoot[key][key2] in classifier_dictionary.keys():
+                    classifier_dictionary[pruneRoot[key][key2]] += 1
+                else:
+                    classifier_dictionary[pruneRoot[key][key2]] = 1
+
+    if all_classifiers is True:
+        #prune
+        #find max classifier
+        #set pruneRoot = maxClassifier
+        max_classifier_freq = 0
+        most_popular_classifier = ""
+        for key in classifier_dictionary.keys():
+            if (classifier_dictionary[key] > max_classifier_freq):
+                max_classifier_freq = classifier_dictionary[key]
+                most_popular_classifer = key
+        pruneRoot[tempkey] = most_popular_classifer
+        #possiblePruneNodes(pruneRoot, attributes, classifiers_list)
+        #print(pruneRoot[key])
+
+
+
+
+    # if (len(pruneRoot) != 0):
+    #     for key in pruneRoot:
+    #         count = 0
+    #         for val in pruneRoot[key]:
+    #             #if all pruneRoot
+    #             print(pruneRoot[key][val])
+    #             if (pruneRoot[key][val] in classifiers_list):
+    #                 count += 1
+    #         if count == len(pruneRoot[key]):
+    #             possPrunes.append(key)
+    #             print("Prune", key)
+    #     for key in pruneRoot:
+    #         if (type(pruneRoot) is dict):
+    #             possiblePruneNodes(pruneRoot[key], attributes, classifiers_list, possPrunes)
+    #     return possPrunes
+    # else:
+
+
+    #root with only values as children then want to prune somehow
+    #want to set root to equal the most common value
+    #keysofRoot = len(pruneRoot.keys())
+
+    #else call the possiblePruneNodes for each root[key] in root with root[key as pruneRoot]
+
+
+#for iterative testing
+#set a veriable count and pass it into the tree creator
+#the most you want to initialize count to is the number of Attributes
+#for the number of attributes
+#call tree recrusively subtracting one from count each time
+#will allow you to rerun the tree build with different sizes
+
+def main():
+
+    #Capture the randomized test and train data
+    #The instances were randomized using excels random number generator
+    data = pd.read_excel("flagdataFinalTrain.xlsx")
+    testData = pd.read_excel("flagdataFinalTest.xlsx")
+
+    attributes = data.columns.values
+    myData = data.values
+    mytestData = testData.values
+
+    classifier = data.columns.values[-1]
+    classification_attribute_index = findIndex(classifier, attributes)
+    classifiers_list = []
+    for row in myData:
+        if row[classification_attribute_index] not in classifiers_list:
+            classifiers_list.append(row[classification_attribute_index])
+
+    print("Possible classifiers: ", classifiers_list)
+    print("Classifier : ", classifier)
+    print("Attributes: ", attributes)
+    used_attributes = []
+    root = tree(myData, classifier, attributes, used_attributes)
+    pruneRoot = copy.deepcopy(root)
+    # for key in pruneRoot:
+    #     print(pruneRoot.get(key[, "NoMoValuesBro"]))
+
+    possiblePruneNodes(pruneRoot, attributes, classifiers_list)
+    print("pruned: ",pruneRoot)
+    print("bitchroot: ", root)
+
+
+
+
+    #take the tree and current error rate
+    #go through and for each node whose node[key] is a value replace the node
+    #with the majority value
+    #fucntion for fidning each possible node that can be pruned and return a list of those nodes
+    #copy the tree (root)
+    #things to pass into prune func is data, the copy of the tree, and the feature to try to be pruned, index of the feature
+    #index of classifier(-1)
+        #want to recursively iterate
+        #find the feature that i want, if im not there than call the same functions
+        #start pruning if its the function than remove all children : {}
+        #^ or you can take the copy of key(node to be pruned) and iterate through its children
+
+    #pass in list of attributes, list of classifiers, and prunetree
+
+
+
+    #pass the copy of the tree into a method
+
+    #Print out a formatted decision tree
+    #print(json.dumps(root, indent=4, sort_keys=True))
+
+    #These lists are to test the decision tree on the test data
+    predictionList = []
+    actualList = []
+
+    #Tbese lists are to test the decision tree on the training data
+    trainList = []
+    trainTestList = []
+
+    trainErrors = 0.0
+    testErrors = 0.0
+    testErrorRate = 0.0
+    trainErrorRate = 0.0
+
+    classification_attribute_index = findIndex(classifier, attributes)
+    for row in myData:
+        if row[classification_attribute_index] not in classifiers_list:
+            classifiers_list.append(row[classification_attribute_index])
+    for checkRow in myData:
+        trainGuess = predictor(checkRow, attributes, classifiers_list, root)
+        trainTestList.append(trainGuess)
+        trainList.append(checkRow[-1])
+
+    for rows in mytestData:
+        myGuess = predictor(rows, attributes, classifiers_list, root)
+        predictionList.append(myGuess)
+        actualList.append(rows[-1])
+
+    for x in range(len(actualList)):
+        #print(actualList[x])
+        #print(predictionList[x])
+        if actualList[x] != predictionList[x]:
+            testErrors += 1.0
+    testErrorRate = testErrors / len(actualList)
+    testErrorRate = testErrorRate * 100.0
+    print("Test Error Rate: ", testErrorRate, "%")
+
+
+    for x in range(len(trainList)):
+        #print(trainList[x])
+        #print(trainTestList[x])
+        if trainList[x] != trainTestList[x]:
+            trainErrors += 1.0
+    trainErrorRate = trainErrors / len(trainList)
+    trainErrorRate = trainErrorRate * 100
+    print("Train Error Rate: ", trainErrorRate, "%")
+
+
+
+if __name__ == "__main__":
+    main()
